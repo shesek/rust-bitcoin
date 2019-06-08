@@ -206,7 +206,7 @@ mod tests {
 
         let mut sk: ExtendedPrivKey = ExtendedPrivKey::new_master(Bitcoin, &seed).unwrap();
 
-        let fprint: Fingerprint = sk.fingerprint(&secp);
+        let fprint: Fingerprint = sk.fingerprint(&secp).unwrap();
 
         let dpath: Vec<ChildNumber> = vec![
             ChildNumber::from_normal_idx(0).unwrap(),
@@ -221,7 +221,7 @@ mod tests {
 
         sk = sk.derive_priv(secp, &dpath).unwrap();
 
-        let pk: ExtendedPubKey = ExtendedPubKey::from_private(&secp, &sk);
+        let pk: ExtendedPubKey = ExtendedPubKey::from_private(&secp, &sk).unwrap();
 
         hd_keypaths.insert(pk.public_key, (fprint, dpath.into()));
 

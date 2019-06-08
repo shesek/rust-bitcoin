@@ -46,17 +46,6 @@ impl Default for Fingerprint {
     fn default() -> Fingerprint { Fingerprint([0; 4]) }
 }
 
-/// Script type for addresses
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
-pub enum ScriptType {
-    /// Pay to pubkey hash
-    P2pkh,
-    /// Pay to witness pubkey hash
-    P2wpkh,
-    /// Pay to witness pubkey hash, wrapped in pay to script hash
-    P2shP2wpkh,
-}
-
 /// A version number
 pub struct Version([u8; 4]);
 impl_array_newtype!(Version, u8, 4);
@@ -64,44 +53,35 @@ impl_array_newtype_show!(Version);
 impl_array_newtype_encodable!(Version, u8, 4);
 
 impl Version {
-    fn default_for(network: Network) -> Version {
-        Version::from(&match network {
-            Network::Bitcoin => [0x04u8, 0x88, 0xB2, 0x1E], // P2PKH
-            Network::Testnet | Network::Regtest => [0x06u8, 0x35, 0x87, 0xCF], // P2PKH
-        }[..])
-    }
-
-    fn public_params(&self) -> Result<(Network, ScriptType), base58::Error> {
-        Ok(match self.0 {
-            [0x04u8, 0x88, 0xB2, 0x1E] => (Network::Bitcoin, ScriptType::P2pkh),
-            [0x04u8, 0xB2, 0x47, 0x46] => (Network::Bitcoin, ScriptType::P2wpkh),
-            [0x04u8, 0x9D, 0x7C, 0xB2] => (Network::Bitcoin, ScriptType::P2shP2wpkh),
-
-            [0x04u8, 0x35, 0x87, 0xCF] => (Network::Testnet, ScriptType::P2pkh),
-            [0x04u8, 0x5F, 0x1C, 0xF6] => (Network::Testnet, ScriptType::P2wpkh),
-            [0x04u8, 0x4A, 0x52, 0x62] => (Network::Testnet, ScriptType::P2shP2wpkh),
-
-            _ => return Err(base58::Error::InvalidVersion(self.0.to_vec()))
+    fn private_for_network(network: Network) -> Version {
+        Version(match network {
+            Network::Bitcoin => [0x04u8, 0x88, 0xAD, 0xE4],
+            Network::Testnet | Network::Regtest => [0x04u8, 0x35, 0x83, 0x94],
         })
     }
 
-    fn private_params(&self) -> Result<(Network, ScriptType), base58::Error> {
-        Ok(match self.0 {
-            [0x04u8, 0x88, 0xAD, 0xE4] => (Network::Bitcoin, ScriptType::P2pkh),
-            [0x04u8, 0xB2, 0x43, 0x0C] => (Network::Bitcoin, ScriptType::P2wpkh),
-            [0x04u8, 0x9D, 0x78, 0x78] => (Network::Bitcoin, ScriptType::P2shP2wpkh),
-
-            [0x04u8, 0x35, 0x83, 0x94] => (Network::Testnet, ScriptType::P2pkh),
-            [0x04u8, 0x5F, 0x18, 0xBC] => (Network::Testnet, ScriptType::P2wpkh),
-            [0x04u8, 0x4A, 0x4E, 0x28] => (Network::Testnet, ScriptType::P2shP2wpkh),
-
-            _ => return Err(base58::Error::InvalidVersion(self.0.to_vec()))
+    fn public_for_network(network: Network) -> Version {
+        Version(match network {
+            Network::Bitcoin => [0x04u8, 0x88, 0xB2, 0x1E],
+            Network::Testnet | Network::Regtest => [0x06u8, 0x35, 0x87, 0xCF],
         })
     }
-}
 
-impl Default for Version {
-    fn default() -> Self { Self::default_for(Network::Bitcoin) }
+    fn public_network(&self) -> Option<Network> {
+        Some(match self.0 {
+            [0x04u8, 0x88, 0xB2, 0x1E] => Network::Bitcoin,
+            [0x04u8, 0x35, 0x87, 0xCF] => Network::Testnet,
+            _ => return None
+        })
+    }
+
+    fn private_network(&self) -> Option<Network> {
+        Some(match self.0 {
+            [0x04u8, 0x88, 0xAD, 0xE4] => Network::Bitcoin,
+            [0x04u8, 0x35, 0x83, 0x94] => Network::Testnet,
+            _ => return None
+        })
+    }
 }
 
 /// Extended private key
@@ -109,10 +89,6 @@ impl Default for Version {
 pub struct ExtendedPrivKey {
     /// The version bytes for this key
     pub version: Version,
-    /// The network this key is to be used on
-    pub network: Network,
-    /// The script type for addresses derived from this key
-    pub script_type: ScriptType,
     /// How many derivations this key is from the master (which is 0)
     pub depth: u8,
     /// Fingerprint of the parent key (0 for master)
@@ -130,10 +106,6 @@ pub struct ExtendedPrivKey {
 pub struct ExtendedPubKey {
     /// The version bytes for this key
     pub version: Version,
-    /// The network this key is to be used on
-    pub network: Network,
-    /// The script type for addresses derived from this key
-    pub script_type: ScriptType,
     /// How many derivations this key is from the master (which is 0)
     pub depth: u8,
     /// Fingerprint of the parent key
@@ -468,6 +440,8 @@ pub enum Error {
     InvalidChildNumberFormat,
     /// Invalid derivation path format.
     InvalidDerivationPathFormat,
+    /// Non standard version prefix
+    NonStandardVersionPrefix(Version),
 }
 
 impl fmt::Display for Error {
@@ -479,6 +453,7 @@ impl fmt::Display for Error {
             Error::RngError(ref s) => write!(f, "rng error {}", s),
             Error::InvalidChildNumberFormat => f.write_str("invalid child number format"),
             Error::InvalidDerivationPathFormat => f.write_str("invalid derivation path format"),
+            Error::NonStandardVersionPrefix(ref v) => write!(f, "version prefix {:?} is non-standard", v),
         }
     }
 }
@@ -500,6 +475,7 @@ impl error::Error for Error {
             Error::RngError(_) => "rng error",
             Error::InvalidChildNumberFormat => "invalid child number format",
             Error::InvalidDerivationPathFormat => "invalid derivation path format",
+            Error::NonStandardVersionPrefix(_) => "non-standard version prefix",
         }
     }
 }
@@ -515,13 +491,8 @@ impl ExtendedPrivKey {
         hmac_engine.input(seed);
         let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
 
-        let version = Version::default_for(network);
-        let (_, script_type) = version.private_params().unwrap(); // cannot fail, its the default
-
         Ok(ExtendedPrivKey {
-            version: version,
-            network: network,
-            script_type: script_type,
+            version: Version::private_for_network(network),
             depth: 0,
             parent_fingerprint: Default::default(),
             child_number: ChildNumber::from_normal_idx(0)?,
@@ -570,19 +541,20 @@ impl ExtendedPrivKey {
 
         hmac_engine.input(&be_n);
         let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
+
+        // If the network is unknown, we default the PrivateKey to use bitcoin mainnet.
+        // This only effects WIF encoding.
         let mut sk = PrivateKey {
             compressed: true,
-            network: self.network,
+            network: self.network().unwrap_or(Network::Bitcoin),
             key: secp256k1::SecretKey::from_slice(&hmac_result[..32]).map_err(Error::Ecdsa)?,
         };
         sk.key.add_assign(&self.private_key[..]).map_err(Error::Ecdsa)?;
 
         Ok(ExtendedPrivKey {
             version: self.version,
-            network: self.network,
-            script_type: self.script_type,
             depth: self.depth + 1,
-            parent_fingerprint: self.fingerprint(secp),
+            parent_fingerprint: self.fingerprint(secp)?,
             child_number: i,
             private_key: sk,
             chain_code: ChainCode::from(&hmac_result[32..])
@@ -590,29 +562,87 @@ impl ExtendedPrivKey {
     }
 
     /// Returns the HASH160 of the chaincode
-    pub fn identifier<C: secp256k1::Signing>(&self, secp: &Secp256k1<C>) -> hash160::Hash {
-        ExtendedPubKey::from_private(secp, self).identifier()
+    ///
+    /// Requires converting the xpriv to an xpub, may fail if the version prefix is unknown.
+    pub fn identifier<C: secp256k1::Signing>(&self, secp: &Secp256k1<C>) -> Result<hash160::Hash, Error> {
+        // XXX Result or Option?
+        Ok(ExtendedPubKey::from_private(secp, self)?.identifier())
     }
 
     /// Returns the first four bytes of the identifier
-    pub fn fingerprint<C: secp256k1::Signing>(&self, secp: &Secp256k1<C>) -> Fingerprint {
-        Fingerprint::from(&self.identifier(secp)[0..4])
+    ///
+    /// Requires converting the xpriv to an xpub, may fail if the version prefix is unknown.
+    pub fn fingerprint<C: secp256k1::Signing>(&self, secp: &Secp256k1<C>) -> Result<Fingerprint, Error> {
+        // XXX Result or Option?
+        Ok(Fingerprint::from(&self.identifier(secp)?[0..4]))
+    }
+
+    /// Returns the network this key is to be used on according to the version prefix
+    pub fn network(&self) -> Option<Network> {
+        self.version.private_network()
+    }
+
+    /// Parse from string, accepting any prefix version
+    pub fn from_str_any_prefix(inp: &str) -> Result<ExtendedPrivKey, base58::Error> {
+        let data = base58::from_check(inp)?;
+
+        if data.len() != 78 {
+            return Err(base58::Error::InvalidLength(data.len()));
+        }
+
+        let cn_int: u32 = Cursor::new(&data[9..13]).read_u32::<BigEndian>().unwrap();
+        let child_number: ChildNumber = ChildNumber::from(cn_int);
+
+        // The internal PrivateKey is always initiated with bitcoin mainnet because we're
+        // not aware of the actual network. This only effects WIF encoding.
+        Ok(ExtendedPrivKey {
+            version: Version::from(&data[0..4]),
+            depth: data[4],
+            parent_fingerprint: Fingerprint::from(&data[5..9]),
+            child_number: child_number,
+            chain_code: ChainCode::from(&data[13..45]),
+            private_key: PrivateKey {
+                compressed: true,
+                network: Network::Bitcoin,
+                key: secp256k1::SecretKey::from_slice(
+                    &data[46..78]
+                ).map_err(|e|
+                        base58::Error::Other(e.to_string())
+                )?,
+            },
+        })
     }
 }
 
 impl ExtendedPubKey {
     /// Derives a public key from a private key
-    pub fn from_private<C: secp256k1::Signing>(secp: &Secp256k1<C>, sk: &ExtendedPrivKey) -> ExtendedPubKey {
+    ///
+    /// With an explicit version prefix to use for the extended public key.
+    pub fn from_private_with_prefix<C: secp256k1::Signing>(secp: &Secp256k1<C>, sk: &ExtendedPrivKey, pk_version: Version) -> ExtendedPubKey {
         ExtendedPubKey {
-            version: sk.version,
-            network: sk.network,
-            script_type: sk.script_type,
+            version: pk_version,
             depth: sk.depth,
             parent_fingerprint: sk.parent_fingerprint,
             child_number: sk.child_number,
             public_key: PublicKey::from_private_key(secp, &sk.private_key),
             chain_code: sk.chain_code
         }
+    }
+
+    /// Derives a public key from a private key
+    ///
+    /// With an implicit private to public version prefix conversion. May fail for unknown version
+    /// bytes.
+    pub fn from_private<C: secp256k1::Signing>(secp: &Secp256k1<C>, sk: &ExtendedPrivKey) -> Result<ExtendedPubKey, Error> {
+        // XXX allow setting the intented public version prefix as a property of the ExtendedPrivKey,
+        // so that from_private() (and by association, fingerprint(), identifier() and ckd_priv())
+        // could operate on them? or alternatively, introduce _with_prefix versions of the
+        // dependent methods?
+        let network = sk.network().ok_or_else(|| Error::NonStandardVersionPrefix(sk.version))?;
+        let pk_version = Version::public_for_network(network);
+
+        // XXX Result or Option?
+        Ok(Self::from_private_with_prefix(secp, sk, pk_version))
     }
 
     /// Attempts to derive an extended public key from a path.
@@ -645,9 +675,11 @@ impl ExtendedPubKey {
 
                 let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
 
+                // If the network is unknown, we default the PrivateKey to use bitcoin mainnet.
+                // This only effects WIF encoding.
                 let private_key = PrivateKey {
                     compressed: true,
-                    network: self.network,
+                    network: self.network().unwrap_or(Network::Bitcoin),
                     key: secp256k1::SecretKey::from_slice(&hmac_result[..32])?,
                 };
                 let chain_code = ChainCode::from(&hmac_result[32..]);
@@ -668,8 +700,6 @@ impl ExtendedPubKey {
 
         Ok(ExtendedPubKey {
             version: self.version,
-            network: self.network,
-            script_type: self.script_type,
             depth: self.depth + 1,
             parent_fingerprint: self.fingerprint(),
             child_number: i,
@@ -688,6 +718,34 @@ impl ExtendedPubKey {
     /// Returns the first four bytes of the identifier
     pub fn fingerprint(&self) -> Fingerprint {
         Fingerprint::from(&self.identifier()[0..4])
+    }
+
+    /// Returns the network this key is to be used on
+    pub fn network(&self) -> Option<Network> {
+        self.version.public_network()
+    }
+
+    /// Parse from string, accepting any prefix version
+    pub fn from_str_any_prefix(inp: &str) -> Result<ExtendedPubKey, base58::Error> {
+        let data = base58::from_check(inp)?;
+
+        if data.len() != 78 {
+            return Err(base58::Error::InvalidLength(data.len()));
+        }
+
+        let cn_int: u32 = Cursor::new(&data[9..13]).read_u32::<BigEndian>().unwrap();
+        let child_number: ChildNumber = ChildNumber::from(cn_int);
+
+        Ok(ExtendedPubKey {
+            version: Version::from(&data[0..4]),
+            depth: data[4],
+            parent_fingerprint: Fingerprint::from(&data[5..9]),
+            child_number: child_number,
+            chain_code: ChainCode::from(&data[13..45]),
+            public_key: PublicKey::from_slice(
+                             &data[45..78]).map_err(|e|
+                                 base58::Error::Other(e.to_string()))?
+        })
     }
 }
 
@@ -710,37 +768,14 @@ impl fmt::Display for ExtendedPrivKey {
 impl FromStr for ExtendedPrivKey {
     type Err = base58::Error;
 
+    /// Parse from string, validating the prefix version matches a known one
     fn from_str(inp: &str) -> Result<ExtendedPrivKey, base58::Error> {
-        let data = base58::from_check(inp)?;
+        let sk = Self::from_str_any_prefix(inp)?;
 
-        if data.len() != 78 {
-            return Err(base58::Error::InvalidLength(data.len()));
+        match sk.network() {
+            Some(_) => Ok(sk),
+            None => Err(base58::Error::InvalidVersion((&sk.version.0).to_vec()))
         }
-
-        let cn_int: u32 = Cursor::new(&data[9..13]).read_u32::<BigEndian>().unwrap();
-        let child_number: ChildNumber = ChildNumber::from(cn_int);
-
-        let version = Version::from(&data[0..4]);
-        let (network, script_type) = version.private_params()?;
-
-        Ok(ExtendedPrivKey {
-            version: version,
-            network: network,
-            script_type: script_type,
-            depth: data[4],
-            parent_fingerprint: Fingerprint::from(&data[5..9]),
-            child_number: child_number,
-            chain_code: ChainCode::from(&data[13..45]),
-            private_key: PrivateKey {
-                compressed: true,
-                network: network,
-                key: secp256k1::SecretKey::from_slice(
-                    &data[46..78]
-                ).map_err(|e|
-                        base58::Error::Other(e.to_string())
-                )?,
-            },
-        })
     }
 }
 
@@ -762,31 +797,14 @@ impl fmt::Display for ExtendedPubKey {
 impl FromStr for ExtendedPubKey {
     type Err = base58::Error;
 
+    /// Parse from string, validating the prefix version matches a known one
     fn from_str(inp: &str) -> Result<ExtendedPubKey, base58::Error> {
-        let data = base58::from_check(inp)?;
+        let pk = Self::from_str_any_prefix(inp)?;
 
-        if data.len() != 78 {
-            return Err(base58::Error::InvalidLength(data.len()));
+        match pk.network() {
+            Some(_) => Ok(pk),
+            None => Err(base58::Error::InvalidVersion((&pk.version.0).to_vec()))
         }
-
-        let cn_int: u32 = Cursor::new(&data[9..13]).read_u32::<BigEndian>().unwrap();
-        let child_number: ChildNumber = ChildNumber::from(cn_int);
-
-        let version = Version::from(&data[0..4]);
-        let (network, script_type) = version.public_params()?;
-
-        Ok(ExtendedPubKey {
-            version: version,
-            network: network,
-            script_type: script_type,
-            depth: data[4],
-            parent_fingerprint: Fingerprint::from(&data[5..9]),
-            child_number: child_number,
-            chain_code: ChainCode::from(&data[13..45]),
-            public_key: PublicKey::from_slice(
-                             &data[45..78]).map_err(|e|
-                                 base58::Error::Other(e.to_string()))?
-        })
     }
 }
 
@@ -871,7 +889,7 @@ mod tests {
                  expected_pk: &str) {
 
         let mut sk = ExtendedPrivKey::new_master(network, seed).unwrap();
-        let mut pk = ExtendedPubKey::from_private(secp, &sk);
+        let mut pk = ExtendedPubKey::from_private(secp, &sk).unwrap();
 
         // Check derivation convenience method for ExtendedPrivKey
         assert_eq!(
@@ -899,7 +917,7 @@ mod tests {
             match num {
                 Normal {..} => {
                     let pk2 = pk.ckd_pub(secp, num).unwrap();
-                    pk = ExtendedPubKey::from_private(secp, &sk);
+                    pk = ExtendedPubKey::from_private(secp, &sk).unwrap();
                     assert_eq!(pk, pk2);
                 }
                 Hardened {..} => {
@@ -907,7 +925,7 @@ mod tests {
                         pk.ckd_pub(secp, num),
                         Err(Error::CannotDeriveFromHardenedKey)
                     );
-                    pk = ExtendedPubKey::from_private(secp, &sk);
+                    pk = ExtendedPubKey::from_private(secp, &sk).unwrap();
                 }
             }
         }
