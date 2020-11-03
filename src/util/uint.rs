@@ -22,6 +22,7 @@ macro_rules! construct_uint {
     ($name:ident, $n_words:expr) => (
         /// Little-endian large integer type
         #[derive(Copy, Clone, PartialEq, Eq, Hash, Default)]
+        #[cfg_attr(feature = "use-serde", derive(serde::Serialize, serde::Deserialize))]
         pub struct $name(pub [u64; $n_words]);
         impl_array_newtype!($name, u64, $n_words);
 
