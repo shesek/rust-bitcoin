@@ -403,6 +403,58 @@ macro_rules! construct_uint {
                 Ok($name(ret))
             }
         }
+
+        #[cfg(feature = "serde")]
+        impl $crate::serde::Serialize for $name {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: $crate::serde::Serializer,
+            {
+                use $crate::serde::ser::SerializeTuple;
+                let mut tup = serializer.serialize_tuple($n_words)?;
+                for i in 0..$n_words {
+                    tup.serialize_element(&self.0[i])?;
+                }
+                tup.end()
+            }
+        }
+
+        #[cfg(feature = "serde")]
+        impl<'de> $crate::serde::Deserialize<'de> for $name {
+            fn deserialize<D: $crate::serde::Deserializer<'de>>(
+                deserializer: D,
+            ) -> Result<Self, D::Error> {
+                use ::std::fmt::{self, Formatter};
+                use $crate::serde::de::Error;
+                struct Visitor;
+                impl<'de> $crate::serde::de::Visitor<'de> for Visitor {
+                    type Value = $name;
+
+                    fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
+                        write!(formatter, "array with {} integers", $n_words)
+                    }
+
+                    fn visit_seq<S>(self, mut seq: S) -> Result<Self::Value, S::Error>
+                    where
+                        S: $crate::serde::de::SeqAccess<'de>,
+                    {
+                        let mut ints: Vec<u64> = vec![];
+                        for _ in 0..$n_words {
+                            ints.push(seq.next_element()?.ok_or_else(|| {
+                                Error::invalid_length(ints.len(), &$n_words.to_string().as_str())
+                            })?);
+                        }
+                        if seq.next_element::<u64>()?.is_some() {
+                            Err(Error::invalid_length($n_words + 1, &$n_words.to_string().as_str()))
+                        } else {
+                            Ok(ints[..].into())
+                        }
+                    }
+                }
+
+                deserializer.deserialize_tuple($n_words, Visitor)
+            }
+        }
     );
 }
 
@@ -611,5 +663,17 @@ mod tests {
 
         assert_eq!(end1.ok(), Some(start1));
         assert_eq!(end2.ok(), Some(start2));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    pub fn uint_serde_test() {
+      let init = Uint256::from(&[111,222,333,444][..]);
+      let json = serde_json::to_string(&init).unwrap();
+      assert_eq!(serde_json::from_str::<Uint256>(&json).unwrap(), init);
+
+      let init = Uint128::from(&[111,222][..]);
+      let json = serde_json::to_string(&init).unwrap();
+      assert_eq!(serde_json::from_str::<Uint128>(&json).unwrap(), init);
     }
 }
