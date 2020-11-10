@@ -668,12 +668,27 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     pub fn uint_serde_test() {
-      let init = Uint256::from(&[111,222,333,444][..]);
-      let json = serde_json::to_string(&init).unwrap();
-      assert_eq!(serde_json::from_str::<Uint256>(&json).unwrap(), init);
+        let init = Uint128([111, 222]);
+        let json = serde_json::to_string(&init).unwrap();
+        assert_eq!(serde_json::from_str::<Uint128>(&json).unwrap(), init);
 
-      let init = Uint128::from(&[111,222][..]);
-      let json = serde_json::to_string(&init).unwrap();
-      assert_eq!(serde_json::from_str::<Uint128>(&json).unwrap(), init);
+        let check = |uint, json| {
+            assert_eq!(serde_json::to_string(&uint).unwrap(), json);
+            assert_eq!(serde_json::from_str::<Uint256>(json).unwrap(), uint);
+        };
+
+        check(Uint256::from_u64(0).unwrap(), "[0,0,0,0]");
+        check(Uint256::from_u64(0xDEADBEEF).unwrap(), "[3735928559,0,0,0]");
+        check(Uint256([111, 222, 333, 444]), "[111,222,333,444]");
+        check(
+            Uint256([u64::MAX, u64::MAX, u64::MAX, u64::MAX]),
+            "[18446744073709551615,18446744073709551615,18446744073709551615,18446744073709551615]",
+        );
+
+        assert!(serde_json::from_str::<Uint256>("[]").is_err());
+        assert!(serde_json::from_str::<Uint256>("[1,2,3]").is_err());
+        assert!(serde_json::from_str::<Uint256>("[1,2,3,-4]").is_err());
+        assert!(serde_json::from_str::<Uint256>("[1,2,3,4,5]").is_err());
+        assert!(serde_json::from_str::<Uint256>("[1,2,3,18446744073709551617]").is_err()); // > u64::MAX
     }
 }
