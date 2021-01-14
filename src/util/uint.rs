@@ -496,8 +496,8 @@ construct_uint!(Uint128, 2);
 /// Uint error
 #[derive(Debug)]
 pub enum Error {
-    /// Invalid slice length
-    InvalidLength(usize, usize), // (expected, actual)
+    /// Invalid slice length (actual, expected)
+    InvalidLength(usize, usize),
 }
 
 impl Uint256 {
